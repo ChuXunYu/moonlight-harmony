@@ -24,7 +24,7 @@
 import { avSession as AVSessionManager } from '@kit.AVSessionKit';
 import { backgroundTaskManager } from '@kit.BackgroundTasksKit';
 import { wantAgent, WantAgent } from '@kit.AbilityKit';
-import { common } from '@kit.AbilityKit';
+import { common, bundleManager } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { notificationManager } from '@kit.NotificationKit';
 import { image } from '@kit.ImageKit';
@@ -265,9 +265,12 @@ export class BackgroundStreamService {
   private async startContinuousTask(): Promise<void> {
     try {
       // 创建 WantAgent（点击通知时跳转回应用）
+      // 包名动态获取：本项目允许改包名二次打包，写死会导致长时任务通知点击后跳转失效
+      const selfBundleName: string =
+        bundleManager.getBundleInfoForSelfSync(bundleManager.BundleFlag.GET_BUNDLE_INFO_DEFAULT).name;
       const wantAgentInfo: wantAgent.WantAgentInfo = {
         wants: [{
-          bundleName: 'com.alkaidlab.sdream',
+          bundleName: selfBundleName,
           abilityName: 'EntryAbility'
         }],
         actionType: wantAgent.OperationType.START_ABILITY,
