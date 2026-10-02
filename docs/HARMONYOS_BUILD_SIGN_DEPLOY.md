@@ -230,13 +230,29 @@ INSTALL_FAILED_APP_SOURCE_NOT_TRUSTED
 
 **关于「审核」的澄清**：建应用、申请证书、申请 Profile 都是**即时生效、不经过审核**。审核只发生在最后一步——**提交版本上架**。所以想拿长期签名并不会被审核卡住，真正的成本是**换包名**。
 
+### 5.2 本地二次打包（改包名）
+
+想用**自己的包名**做一份独立应用时（例如为了在自己账号下拿到长期有效的签名，或不想占用上游的包名），要动的地方：
+
+| # | 事项 | 说明 |
+|---|---|---|
+| 1 | 改 `AppScope/app.json5` 的 `bundleName` | 全仓库**唯一**的包名声明处 |
+| 2 | 在 DevEco 重新执行「Automatically generate signature」 | 包名变了，旧证书 / Profile 不再匹配；AGC 会为新包名建一个新的 APP ID。**已实名**账号此时拿到的是 **1 年**有效的调试证书 / Profile |
+| 3 | 检查写死的包名 | 长时任务通知的 WantAgent 曾写死 `bundleName`（会导致点通知跳转失效），现已改为动态获取，无需再动 |
+| 4 | 接受数据不继承 | 新包名 = 全新应用，Preferences 与 `filesDir` 均为空 → **配对关系 + 全部设置都会丢** |
+| 5 | 处理旧包 | 两个包会**并存**，不会互相覆盖，注意别搞混 |
+
+**想保留配对和设置**：用应用内的「设置 → 备份/恢复 → 导出到文件」生成 `.mlbk`，装好新包后再导入。备份里包含 `clientCert` / `clientKey` / `uniqueId` 和电脑列表（含 `serverCert`），**足以完整恢复配对关系**；且 v2 备份用写死的默认密码（`CryptoService.ets` 里的 `DEFAULT_PASSWORD`）派生密钥加密，**跨包名可解**。⚠️ 导出必须在旧包**还能启动**时完成。
+
+> **建议把改包名放在独立分支上**，不要混进 `master`：它永远不可能合回上游，留在主线会导致每次同步上游时都在 `AppScope/app.json5` 上冲突。
+
 ---
 
 ## 6. 验证清单
 
 ```powershell
 # 版本与权限（设备侧真实登记情况）
-& $hdc -t <t> shell "bm dump -n com.alkaidlab.sdream" | Select-Object -Last 3
+& $hdc -t <t> shell "bm dump -n <bundleName>" | Select-Object -Last 3
 
 # 确认产物内容（HAP 就是 zip，可读 module.json）
 Add-Type -AssemblyName System.IO.Compression.FileSystem
