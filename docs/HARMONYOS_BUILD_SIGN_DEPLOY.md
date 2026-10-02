@@ -155,7 +155,7 @@ $hdc = 'D:\DevEco Studio\sdk\default\openharmony\toolchains\hdc.exe'
 
 ---
 
-## 5. 签名有效期（**14 天**）
+## 5. 签名有效期（**14 天**）与它的真正根因
 
 从 `C:\Users\<用户名>\.ohos\config\*.p7b` 可直接读出：
 
@@ -163,19 +163,72 @@ $hdc = 'D:\DevEco Studio\sdk\default\openharmony\toolchains\hdc.exe'
 "validity":{"not-before":1790934982,"not-after":1792144581}   // 相差正好 14 天
 "type":"debug"
 "bundle-name":"com.alkaidlab.sdream"
+"app-identifier":"6918743880746403483"
 ```
 
-证书链（`.cer`）本身有效期很长（根证书至 2049），**限制来自 profile**：
+`.cer` 里其实是 3 段 PEM，解出来看有效期：
 
 | 文件 | 有效期 |
 |---|---|
-| 根证书 / 中间证书 | 2020→2049 / 2020→2030 |
-| **叶证书（debug）** | **14 天** |
+| 根证书 `Huawei CBG Root CA G2` | 2020-03-16 → 2049-03-16 |
+| 中间证书 `Huawei CBG Developer Relations CA G2` | 2020-07-09 → 2030-07-07 |
+| **叶证书** `CN="unknown(...),Development"` | **14 天** |
 | **provision profile** | **14 天** |
+
+**根因不是「自动签名只能给 14 天」，而是账号未实名认证。** 官方规则（[证书 FAQ](https://developer.huawei.com/consumer/cn/doc/doccenter-getting-started/agc-help-cert-faq-0000002329508280)、[申请调试证书](https://developer.huawei.com/consumer/cn/doc/App/agc-help-debug-cert-0000002283256797)、[申请发布证书](https://developer.huawei.com/consumer/cn/doc/App/agc-help-release-cert-0000002283336729)）：
+
+| 账号状态 | 调试证书 | 发布证书 |
+|---|---|---|
+| 已实名认证 | **1 年** | **3 年** |
+| **未实名** | **14 天** | 不可申请 |
+
+两个互相独立的证据都指向「未实名」：叶证书有效期正好 14 天；叶证书 subject 里是 `O=unknown`——实名账号这里会是开发者姓名或企业名。官方文档只给了「证书」的有效期数字，Profile 未单列；实测调试 Profile 与调试证书同为 14 天，应属同源。
 
 **到期后**：系统启动应用时校验 profile，debug 包会失效（打不开）。HAP 文件本身不过期，是签名授权过期——所以**存包没用**。
 
-**续期**：在 DevEco 重新执行一次「Automatically generate signature」拿到新的 14 天 profile → 重新构建 → 重新安装。想彻底摆脱，只能用应用市场的 release 版。
+**续期**：
+
+- **推荐**：完成华为开发者账号实名认证（个人：身份证 + 人脸，免费），然后在 DevEco 重新执行一次「Automatically generate signature」。证书 / Profile 变成 **1 年**，**bundleName 不用改、不需要重新配对**。
+- 兜底：不实名，每 14 天重新自动签名一次 → 重新构建 → 重新安装。
+
+> ⚠️ **副作用提醒**：DevEco 自动签名是**通过 AGC 申请**证书和 Profile 的（证书名以 `auto_debug` 开头），所以它已经在你账号下为 `com.alkaidlab.sdream` 建好了 APP ID。也就是说调试上游 fork 时，上游的包名会被占用在你账号下——可在 AGC「APP ID」列表核对。若上游作者以后要用同一包名上架，会撞车。
+
+### 5.1 想要「长期有效」的三条路线
+
+官方把签名分成三组，**只有前两组能用 `hdc install`**（[证书和Profile类型及使用场景](https://developer.huawei.com/consumer/cn/doc/harmonyos-faqs/faqs-appgallery-81)）：
+
+| 路线 | 证书类型 | Profile 类型 | `hdc install` | 有效期 | 要换 bundleName |
+|---|---|---|---|---|---|
+| **A. 本地调试**（当前在用） | 调试证书 | 调试 | ✅ | 1 年（未实名 14 天） | 不用 |
+| **B. 指定设备发布** | 发布证书 | **指定设备发布** | ✅ | 随发布证书（3 年） | **要** |
+| **C. 上架发布** | 发布证书 | 发布 | ❌ | 随发布证书（3 年） | **要** |
+
+路线 C 用 `hdc` 装会直接报错：
+
+```
+INSTALL_FAILED_APP_SOURCE_NOT_TRUSTED
+```
+
+官方 FAQ 原文：「AGC 发布的证书仅支持上架使用，不支持本地安装。」（[出处](https://developer.huawei.com/consumer/cn/doc/harmonyos-faqs/faqs-package-structure-51)）
+
+路线 B 是唯一「release 签名 + 本地安装」的组合，官方 FAQ 也确认：「指定设备发布证书是 release 的，可以用 hdc 直接安装，不需要发起邀请测试。」（[出处](https://developer.huawei.com/consumer/cn/doc/doccenter-tools-faq/faqs-app-debugging-71)）
+
+**走路线 B 的完整流程：**
+
+1. **建应用**（即时生效，**不涉及审核**）：AGC → 证书、APP ID和Profile → APP ID → 新建 → 应用类型选「HarmonyOS应用」→ 填**你自己的包名**（如 `com.yourname.sdream`）→ 再到「发布」里关联创建一个「待发布」应用（[文档](https://developer.huawei.com/consumer/cn/doc/doccenter-getting-started/agc-help-create-app-0000002247955506)）。
+2. **生成密钥和 CSR**：DevEco → Build → Generate Key and CSR，得到 `.p12` + `.csr`。`.p12` 丢了无法找回，务必备份。
+3. **申请发布证书**：AGC → 证书 → 新增证书 → 类型「发布证书」→ 上传 CSR → 下载 `.cer`。每账号最多 3 个。
+4. **申请 Profile**：AGC → Profile → 添加 → 类型选 **「指定设备发布」**（**不要选「发布」**）→ 选发布证书 → 选测试设备（**最多 100 台**，需设备 UDID；仅支持 手机 / PC-2in1 / 平板）→ 下载 `.p7b`。每应用最多 100 个 Profile（[文档](https://developer.huawei.com/consumer/cn/doc/app/agc-help-internaltest-profile-0000002283260129)）。
+5. **本地配置签名**：`build-profile.json5` 的 `signingConfigs` 填 `storeFile` / `certpath` / `profile` / `keyAlias` / 密码，并在 product 里加 `"signingConfig": "default"`。
+6. **构建安装**：`hvigorw assembleHap` → `hdc install`。
+
+**为什么对「临时验证修复」不划算：**
+
+- 必须**换 bundleName** → 新 APP ID、不继承任何应用数据 → **需要重新和 Sunshine 配对**；而且换包名不可能进 PR。
+- 设备 UDID 要写进 Profile，换设备得「编辑设备」并**重新下载 Profile**。
+- 必须先实名认证。
+
+**关于「审核」的澄清**：建应用、申请证书、申请 Profile 都是**即时生效、不经过审核**。审核只发生在最后一步——**提交版本上架**。所以想拿长期签名并不会被审核卡住，真正的成本是**换包名**。
 
 ---
 
@@ -215,6 +268,7 @@ Copy-Item entry\src\main\ets\config\DevKeySecret.ets.example      entry\src\main
 Copy-Item entry\src\main\ets\config\GitHubOAuthConfig.ets.example entry\src\main\ets\config\GitHubOAuthConfig.ets
 git clone https://github.com/AlkaidLab/moonlight-audio-haptics.git audio-haptics-sdk
 # DevEco 自动签名 + 手补 "signingConfig": "default"
+#   账号未实名 → Profile 仅 14 天；实名认证后为 1 年（详见 §5）
 
 # 构建
 $d='D:\DevEco Studio'; $env:DEVECO_SDK_HOME="$d\sdk"; $env:JAVA_HOME="$d\jbr"
